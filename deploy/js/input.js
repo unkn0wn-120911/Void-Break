@@ -72,4 +72,5 @@
   }
 
   VB.Input = Input;
+  VB.stage && VB.stage("input");
 })();

@@ -1060,4 +1060,5 @@
   }
 
   VB.World = World;
+  VB.stage && VB.stage("world");
 })();

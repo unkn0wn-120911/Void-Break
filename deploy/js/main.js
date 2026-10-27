@@ -4,6 +4,17 @@
   const T = VB.TILE;
   const TAU = VB.TAU;
 
+  const KILL_TIERS = [
+    { text: "FIRST BLOOD", color: "#ffd166" },
+    { text: "DOUBLE KILL", color: "#ff9d3c" },
+    { text: "TRIPLE KILL", color: "#ff5da8" },
+    { text: "ULTRA KILL", color: "#ff4d63" },
+    { text: "RAMPAGE", color: "#c56bff" },
+    { text: "KILLSTORM", color: "#8b5cff" },
+    { text: "SAVAGE", color: "#4ef4ff" },
+    { text: "GODLIKE", color: "#5dffb0" },
+  ];
+
   class Game {
     constructor() {
       this.canvas = document.getElementById("game");
@@ -40,12 +51,26 @@
       this.texts = [];
       this.toasts = [];
       this.pendingBarrels = [];
+      this.fields = [];
+      this.beams = [];
+      this.timers = [];
+      this.linkN = 0;
+      this.linkTimer = 0;
+      this.linkKinds = [];
+      this.linkFused = false;
+      this.linkStruck = false;
+      this.linkOverload = false;
       this.prompt = null;
       this.dialog = null;
       this.dialogQueue = [];
       this.activeLog = null;
 
       this.kills = 0;
+      this.streak = 0;
+      this.streakTimer = 0;
+      this.firstBloodSaid = false;
+      this.banner = null;
+      this.charId = this.savedChar();
       this.logsRead = 0;
       this.bossDefeated = false;
       this.escapeActive = false;
@@ -109,6 +134,11 @@
     syncMuteUI() {
       const btn = document.getElementById("btn-pause-mute");
       if (btn) btn.textContent = "AUDIO: " + (this.audio.muted ? "OFF" : "ON");
+      const voice = document.getElementById("btn-pause-voice");
+      if (voice) {
+        voice.textContent = "ANNOUNCER: " + (this.audio.voiceOn ? "ON" : "OFF");
+        voice.hidden = !window.speechSynthesis;
+      }
     }
 
     bindUI() {
@@ -117,12 +147,20 @@
         if (el) el.addEventListener("click", fn);
       };
 
-      on("btn-start", () => this.startRun());
+      on("btn-start", () => this.goSelect());
+      on("btn-select-go", () => this.startRun());
+      on("btn-select-back", () => this.goTitle());
       on("btn-resume", () => this.resume());
       on("btn-pause-restart", () => this.startRun());
       on("btn-pause-mute", () => {
         this.audio.setMuted(!this.audio.muted);
         this.syncMuteUI();
+        this.audio.ui();
+      });
+      on("btn-pause-voice", () => {
+        this.audio.setVoice(!this.audio.voiceOn);
+        this.syncMuteUI();
+        if (this.audio.voiceOn) this.audio.speak("Announcer online");
         this.audio.ui();
       });
       on("btn-pause-quit", () => this.goTitle());
@@ -137,6 +175,11 @@
           if (this.state === "playing") this.pause();
           else if (this.state === "paused") this.resume();
           else if (this.state === "log") this.closeLog();
+          else if (this.state === "select") this.goTitle();
+        }
+        if (this.state === "select") {
+          if (e.code === "ArrowRight" || e.code === "ArrowDown") this.cycleChar(1);
+          if (e.code === "ArrowLeft" || e.code === "ArrowUp") this.cycleChar(-1);
         }
         if (e.code === "KeyM") {
           this.audio.init();
@@ -150,7 +193,11 @@
           this.closeLog();
         }
         if (e.code === "Enter" || e.code === "NumpadEnter") {
-          if (this.state === "title" || this.state === "dead" || this.state === "victory") {
+          if (this.state === "title") {
+            e.preventDefault();
+            this.goSelect();
+          } else if (this.state === "select" || this.state === "dead" || this.state === "victory") {
+            e.preventDefault();
             this.startRun();
           }
         }
@@ -285,6 +332,7 @@
       if (this.state === "playing") this.pause();
       else if (this.state === "paused") this.resume();
       else if (this.state === "log") this.closeLog();
+      else if (this.state === "select") this.goTitle();
       else if (this.state === "dead" || this.state === "victory") this.goTitle();
       else if (window.AndroidBridge) window.AndroidBridge.exit();
       return this.state;
@@ -292,7 +340,8 @@
 
     /* ============================ state flow ============================ */
 
-    startRun() {
+    startRun(charId) {
+      if (charId && VB.CHARACTERS[charId]) this.charId = charId;
       if (document.activeElement && document.activeElement.blur) {
         document.activeElement.blur();
       }
@@ -310,17 +359,23 @@
 
       this.say("Clamps secured. Atmosphere thin. Reactor signature... unstable.", 3.4, "KESTREL");
       this.say("Another scavenger. The crew left me. You will stay.", 4.6, "AURORA");
-      this.say("Big talk from a voice in the walls. I'm here for the salvage.", 3.8, "ROOK");
+      const def = VB.CHARACTERS[this.player.charId];
+      this.say(def.intro, 3.8, def.name);
       this.introLock = true;
 
       this.toast("DIRECTIVE: RECOVER THE CYAN KEYCARD", "cyan", 4.2);
+      this.toast(
+        `SKILL ${def.skill.name} [${def.skill.key}]  ·  ULTIMATE ${def.ult.name} [${def.ult.key}]`,
+        "magenta",
+        5
+      );
       this.audio.gate();
     }
 
     resetRun() {
       const world = new VB.World();
       this.world = world;
-      this.player = new VB.Player(world.spawn.x, world.spawn.y);
+      this.player = new VB.Player(world.spawn.x, world.spawn.y, this.charId);
       this.enemies = [];
       this.playerBullets = [];
       this.enemyBullets = [];
@@ -330,8 +385,21 @@
       this.texts = [];
       this.toasts = [];
       this.pendingBarrels = [];
+      this.fields = [];
+      this.beams = [];
+      this.timers = [];
+      this.linkN = 0;
+      this.linkTimer = 0;
+      this.linkKinds = [];
+      this.linkFused = false;
+      this.linkStruck = false;
+      this.linkOverload = false;
       this.boss = new VB.Boss(50.5 * T, 11.5 * T);
       this.kills = 0;
+      this.streak = 0;
+      this.streakTimer = 0;
+      this.firstBloodSaid = false;
+      this.banner = null;
       this.logsRead = 0;
       this.bossDefeated = false;
       this.escapeActive = false;
@@ -373,6 +441,129 @@
       this.audio.setMood("calm");
       this.input.keys.clear();
       this.input.mouse.down = false;
+    }
+
+    /* ============================ operator select ============================ */
+
+    savedChar() {
+      try {
+        const id = localStorage.getItem("vb-char");
+        if (id && VB.CHARACTERS[id]) return id;
+      } catch (e) {}
+      return "rook";
+    }
+
+    goSelect() {
+      this.audio.init();
+      this.audio.ui();
+      this.state = "select";
+      this.showOnly("select");
+      this.canvas.style.cursor = "default";
+      this.buildCharGrid();
+      this.selectChar(this.charId, true);
+    }
+
+    buildCharGrid() {
+      const grid = document.getElementById("char-grid");
+      if (!grid || grid.childNodes.length) return;
+      VB.CHAR_ORDER.forEach((id) => {
+        const c = VB.CHARACTERS[id];
+        const card = document.createElement("button");
+        card.type = "button";
+        card.id = "char-" + id;
+        card.className = "char-card";
+        card.style.setProperty("--accent", c.accent);
+        [
+          ["card-name", c.name],
+          ["card-role", c.role],
+          ["card-gun", c.gun.name],
+        ].forEach((row) => {
+          const span = document.createElement("span");
+          span.className = row[0];
+          span.textContent = row[1];
+          card.appendChild(span);
+        });
+        card.addEventListener("click", () => this.selectChar(id));
+        grid.appendChild(card);
+      });
+    }
+
+    selectChar(id, silent) {
+      const c = VB.CHARACTERS[id] || VB.CHARACTERS.rook;
+      this.charId = c.id;
+      try {
+        localStorage.setItem("vb-char", c.id);
+      } catch (e) {}
+      VB.CHAR_ORDER.forEach((other) => {
+        const el = document.getElementById("char-" + other);
+        if (el) el.classList.toggle("sel", other === c.id);
+      });
+      this.renderCharDetail(c);
+      if (!silent) this.audio.ui();
+    }
+
+    renderCharDetail(c) {
+      const host = document.getElementById("char-stats");
+      const blurb = document.getElementById("char-blurb");
+      if (!host || !blurb) return;
+      const all = VB.CHAR_ORDER.map((id) => VB.CHARACTERS[id]);
+      const hi = (fn) => Math.max.apply(null, all.map(fn));
+      const dps = (x) => Math.round((x.gun.dmg * x.gun.pellets) / x.gun.rate);
+      const dash = (x) => 1 / x.dashCd;
+      const rows = [
+        ["HULL", c.hp, hi((x) => x.hp), String(Math.round(c.hp))],
+        ["SHIELD", c.shield, hi((x) => x.shield), String(Math.round(c.shield))],
+        ["MOVE", c.speed, hi((x) => x.speed), String(Math.round(c.speed))],
+        ["DPS", dps(c), hi(dps), String(dps(c))],
+        ["DASH", dash(c), hi(dash), dash(c).toFixed(1) + "/s"],
+      ];
+      while (host.firstChild) host.removeChild(host.firstChild);
+      host.style.setProperty("--accent", c.accent);
+      rows.forEach((row) => {
+        const wrap = document.createElement("div");
+        wrap.className = "cstat";
+        const label = document.createElement("span");
+        label.textContent = row[0];
+        const track = document.createElement("i");
+        const fill = document.createElement("b");
+        fill.style.width = Math.round((row[1] / row[2]) * 100) + "%";
+        track.appendChild(fill);
+        const value = document.createElement("em");
+        value.textContent = row[3];
+        wrap.appendChild(label);
+        wrap.appendChild(track);
+        wrap.appendChild(value);
+        host.appendChild(wrap);
+      });
+      blurb.textContent = c.blurb;
+
+      const kit = document.getElementById("char-kit");
+      if (kit) {
+        while (kit.firstChild) kit.removeChild(kit.firstChild);
+        [
+          ["SKILL", c.skill.name, c.skill.key],
+          ["ULTIMATE", c.ult.name, c.ult.key],
+          ["SQUAD LINK", c.fusion, "CHAIN"],
+        ].forEach((row) => {
+          const line = document.createElement("div");
+          const label = document.createElement("span");
+          label.textContent = row[0];
+          const name = document.createElement("strong");
+          name.textContent = row[1];
+          const key = document.createElement("em");
+          key.textContent = row[2];
+          line.appendChild(label);
+          line.appendChild(name);
+          line.appendChild(key);
+          kit.appendChild(line);
+        });
+      }
+    }
+
+    cycleChar(step) {
+      const order = VB.CHAR_ORDER;
+      const i = order.indexOf(this.charId);
+      this.selectChar(order[(i + step + order.length) % order.length]);
     }
 
     pause() {
@@ -421,6 +612,8 @@
       this.state = "victory";
       this.canvas.style.cursor = "default";
       this.audio.win();
+      this.audio.booyah();
+      this.audio.speak("BOOYAH");
       this.audio.setMood("calm");
       document.getElementById("win-time").textContent = VB.formatTime(this.runTime);
       document.getElementById("win-kills").textContent = String(this.kills);
@@ -635,8 +828,8 @@
       if (pickup.type === "upgrade") {
         p.weaponLevel = 2;
         this.audio.upgrade();
-        this.toast("ION LANCE ONLINE — DAMAGE AND FIRE RATE INCREASED", "gold", 4.4);
-        this.floatText(p.x, p.y - 32, "ION LANCE", "#ffd166");
+        this.toast(p.gun.mk2 + " ONLINE — DAMAGE AND FIRE RATE INCREASED", "gold", 4.4);
+        this.floatText(p.x, p.y - 32, p.gun.mk2, "#ffd166");
         this.particles.ring(p.x, p.y, "#ff9d3c", 70, 0.9);
         this.say("That prototype was never cleared for live fire. Neither were you.", 4, "AURORA");
         return true;
@@ -648,7 +841,7 @@
     onBossDefeated() {
       if (this.bossDefeated) return;
       this.bossDefeated = true;
-      this.kills += 1;
+      this.onKill("boss", this.boss ? this.boss.x : 0, this.boss ? this.boss.y : 0);
       this.escapeActive = true;
       this.escapeTimer = 90;
       this.lastBeep = 99;
@@ -660,7 +853,7 @@
       this.shake(18);
       this.toast("REACTOR CASCADE INITIATED — 90 SECONDS", "red", 5);
       this.say("AURORA: I only wanted someone to stay.", 4.4, "AURORA");
-      this.say("ROOK: Not today. Move!", 2.6, "ROOK");
+      this.say(this.player.name + ": Not today. Move!", 2.6, this.player.name);
       this.spawnEscapeWave();
     }
 
@@ -700,7 +893,444 @@
       if (this.toasts.length > 4) this.toasts.shift();
     }
 
-    explosion(x, y, radius, damage, color) {
+    /* Every confirmed kill feeds the streak counter. Kills spaced further
+       apart than STREAK_WINDOW start a new chain instead of stacking. */
+    onKill(kind, x, y) {
+      this.kills += 1;
+      this.streak += 1;
+      this.streakTimer = 4.5;
+      this.audio.killConfirm();
+      this.ultCredit(kind === "boss" ? 100 : 22);
+      if (kind === "boss") {
+        this.killBanner("HUNTER DOWN", "#ff4d63", this.streak);
+        return;
+      }
+      const tier = Math.min(this.streak, KILL_TIERS.length);
+      if (tier === 1 && this.firstBloodSaid) return;
+      this.firstBloodSaid = true;
+      const t = KILL_TIERS[tier - 1];
+      this.killBanner(t.text, t.color, tier);
+    }
+
+    killBanner(text, color, tier, voice) {
+      this.banner = { text, color, tier: tier || 0, time: 2, max: 2 };
+      if (tier) this.audio.announce(tier);
+      if (tier || voice) this.audio.speak(text);
+    }
+
+    /* ============================ abilities ============================ */
+
+    /* Damage dealt and kills both feed the ultimate meter, so an ult is
+       earned by staying in the fight rather than by waiting. */
+    ultCredit(amount) {
+      const p = this.player;
+      if (!p || p.dead) return;
+      p.ultCharge = VB.clamp(p.ultCharge + amount, 0, p.ultMax);
+    }
+
+    schedule(t, fn) {
+      this.timers.push({ t, fn });
+    }
+
+    updateTimers(dt) {
+      if (!this.timers.length) return;
+      for (const item of this.timers) {
+        item.t -= dt;
+        if (item.t <= 0) item.fn();
+      }
+      this.timers = this.timers.filter((item) => item.t > 0);
+    }
+
+    /* Furthest wall-free point along a ray — used by blink and lock-on casts. */
+    freeAlongRay(x, y, ang, maxDist, r) {
+      const step = Math.max(8, r);
+      let best = { x, y };
+      for (let d = step; d <= maxDist; d += step) {
+        const nx = x + Math.cos(ang) * d;
+        const ny = y + Math.sin(ang) * d;
+        if (this.world.circleSolid(nx, ny, r)) break;
+        best = { x: nx, y: ny };
+      }
+      return best;
+    }
+
+    /* Snap a screen-space aim point onto the nearest walkable floor within
+       reach, so zone abilities never land inside a bulkhead. */
+    freeSpot(target, p, reach) {
+      const ang = Math.atan2(target.y - p.y, target.x - p.x);
+      let d = Math.min(reach, VB.dist(p.x, p.y, target.x, target.y));
+      for (let i = 0; i < 40; i++) {
+        const x = p.x + Math.cos(ang) * d;
+        const y = p.y + Math.sin(ang) * d;
+        if (!this.world.circleSolid(x, y, 18)) return { x, y };
+        d -= 12;
+        if (d < 40) break;
+      }
+      return { x: p.x + Math.cos(ang) * 60, y: p.y + Math.sin(ang) * 60 };
+    }
+
+    segHit(px, py, x1, y1, x2, y2) {
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const len2 = dx * dx + dy * dy || 1;
+      let t = ((px - x1) * dx + (py - y1) * dy) / len2;
+      t = VB.clamp(t, 0, 1);
+      return Math.hypot(px - (x1 + dx * t), py - (y1 + dy * t));
+    }
+
+    castAbility(which) {
+      const p = this.player;
+      if (!p || p.dead || this.state !== "playing") return false;
+      const def = which === "ult" ? p.ultDef : p.skill;
+      if (!def) return false;
+
+      if (which === "ult") {
+        if (p.ultCharge < p.ultMax) {
+          this.audio.deny();
+          this.toast(`${def.name} // CHARGE ${Math.floor((p.ultCharge / p.ultMax) * 100)}%`, "red", 1.4);
+          return false;
+        }
+        p.ultCharge = 0;
+      } else {
+        if (p.skillCd > 0) {
+          this.audio.deny();
+          return false;
+        }
+        // While a link chain is live the skill recharges fast, so a full four
+        // -link combo is spendable inside one window.
+        p.skillCd = this.linkN >= 2 ? p.skillCdMax * 0.18 : p.skillCdMax;
+      }
+
+      const aim = this.mouseWorld();
+      if (def.type === "bulwark") this.execBulwark(def, p);
+      else if (def.type === "surge") this.applySurge(def, p);
+      else if (def.type === "nova") this.execNova(def, p);
+      else if (def.type === "phase") this.execPhase(def, p, aim);
+      else if (def.type === "beam") this.execBeam(def, p, aim);
+      else if (def.type === "zone") this.execZone(def, p, aim);
+
+      if (def.nova) this.novaBlast(def.nova, p.x, p.y, p.accent);
+      if (def.surge) this.applySurge(def.surge, p);
+      if (def.heal) p.heal(def.heal, this);
+      if (def.shield) {
+        p.shield =
+          def.shield >= 900 ? p.maxShield : Math.min(p.maxShield, p.shield + def.shield);
+        this.particles.ring(p.x, p.y, "#7ecbff", 46, 0.5);
+      }
+      if (def.immune) p.invuln = Math.max(p.invuln, def.immune);
+      if (def.flash) this.flash = Math.min(1, this.flash + def.flash);
+
+      this.floatText(p.x, p.y - 38, def.name, p.accent);
+      this.audio.cast();
+      this.linkAbilities(which, def, p);
+      return true;
+    }
+
+    /* Six ability archetypes feed every operator, so a new character is a row
+       of numbers rather than a new class. */
+    execBulwark(def, p) {
+      this.audio.surgeUp();
+      this.particles.ring(p.x, p.y, p.accent, 74, 0.6);
+      this.particles.burst(p.x, p.y, p.accent, 20, { speedMax: 190, lifeMax: 0.6, sizeMax: 2.6 });
+      this.shake(5);
+    }
+
+    applySurge(s, p) {
+      p.surgeT = Math.max(p.surgeT, s.dur || 3);
+      p.surgeRate = Math.min(p.surgeRate, s.rate || 1);
+      p.surgeMove = Math.max(p.surgeMove, s.move || 1);
+      p.dashCut = Math.min(p.dashCut, s.dashCut || 1);
+      this.audio.surgeUp();
+      this.particles.ring(p.x, p.y, "#ffd166", 52, 0.5);
+    }
+
+    execNova(def, p) {
+      this.novaBlast(def, p.x, p.y, p.accent);
+      const echoes = def.echoes || 0;
+      for (let i = 1; i <= echoes; i++) {
+        this.schedule((def.echoGap || 0.34) * i, () => {
+          if (this.state !== "playing") return;
+          this.novaBlast(
+            { r: def.r * 0.92, dmg: def.dmg * 0.55, knock: def.knock * 0.7, flash: 0.12 },
+            p.x,
+            p.y,
+            p.accent
+          );
+        });
+      }
+    }
+
+    execPhase(def, p, aim) {
+      const ang = Math.atan2(aim.y - p.y, aim.x - p.x);
+      const from = { x: p.x, y: p.y };
+      const dest = this.freeAlongRay(p.x, p.y, ang, def.reach || 240, p.r);
+      p.ghosts.push({ x: from.x, y: from.y, a: ang, life: 0.45 });
+      for (let i = 0; i < 10; i++) {
+        const t = i / 10;
+        p.ghosts.push({
+          x: from.x + (dest.x - from.x) * t,
+          y: from.y + (dest.y - from.y) * t,
+          a: ang,
+          life: 0.42 - t * 0.2,
+        });
+      }
+      this.particles.burst(from.x, from.y, p.accent, 18, { speedMax: 220, lifeMax: 0.5, sizeMax: 2.4 });
+      p.x = dest.x;
+      p.y = dest.y;
+      p.invuln = Math.max(p.invuln, 0.28);
+      this.audio.phaseJump();
+      this.shake(7);
+    }
+
+    execBeam(def, p, aim) {
+      const ang = Math.atan2(aim.y - p.y, aim.x - p.x);
+      this.fireBeam(def, p.x, p.y, ang, p.accent);
+    }
+
+    fireBeam(def, ox, oy, ang, color) {
+      const end = this.freeAlongRay(ox, oy, ang, def.len || 700, 8);
+      this.beams.push({
+        x1: ox,
+        y1: oy,
+        x2: end.x,
+        y2: end.y,
+        w: def.width || 12,
+        color,
+        life: 0.34,
+        max: 0.34,
+      });
+      this.audio.beamBlast();
+      this.shake(6 + (def.width || 12));
+      const hit = (e) => {
+        if (this.segHit(e.x, e.y, ox, oy, end.x, end.y) > (def.width || 12) / 2 + e.r) return false;
+        e.active = true;
+        if (def.mark) e.markT = Math.max(e.markT, def.mark);
+        if (def.slow) e.applySlow(def.slow, def.slowTime || 1.4);
+        e.takeDamage(def.dmg || 20, this);
+        return true;
+      };
+      for (const e of this.enemies) if (!e.dead && e.spawnT <= 0) hit(e);
+      const b = this.boss;
+      if (b && b.active && !b.dead && b.spawnT <= 0) hit(b);
+    }
+
+    execZone(def, p, aim) {
+      const reach = def.reach || 420;
+      const base = this.freeSpot(aim, p, reach);
+      const count = def.count || 1;
+      for (let i = 0; i < count; i++) {
+        const at = i === 0 ? 0 : (def.gapTime || 0.5) * i;
+        const spread =
+          i === 0
+            ? null
+            : this.freeSpot(
+                {
+                  x: base.x + Math.cos(i * 2.1) * def.r * 0.85,
+                  y: base.y + Math.sin(i * 2.1) * def.r * 0.85,
+                },
+                p,
+                reach
+              );
+        const spot = spread || base;
+        this.schedule(at, () => {
+          if (this.state !== "playing") return;
+          this.spawnField({
+            x: spot.x,
+            y: spot.y,
+            r: def.r,
+            dur: def.dur,
+            tick: def.tick,
+            dmg: def.dmg,
+            slow: def.slow,
+            slowTime: def.slowTime,
+            mark: def.mark,
+            color: p.accent,
+          });
+        });
+      }
+    }
+
+    spawnField(o) {
+      const f = new VB.Field(o);
+      this.fields.push(f);
+      this.audio.zoneDrop();
+      this.particles.ring(o.x, o.y, o.color || "#ff9d3c", (o.r || 120) * 1.1, 0.45);
+      return f;
+    }
+
+    novaBlast(spec, x, y, color) {
+      if (!spec) return;
+      const r = spec.r || 150;
+      const dmg = spec.dmg || 20;
+      const knock = spec.knock || 0;
+      this.audio.novaBlast();
+      this.shake(Math.min(26, 9 + r / 20));
+      this.flash = Math.min(1, this.flash + (spec.flash || 0.22));
+      this.particles.ring(x, y, color, r, 0.62);
+      this.particles.ring(x, y, "#ffffff", r * 0.55, 0.4);
+      this.particles.burst(x, y, color, 30, { speedMax: r * 2.4, sizeMax: 3.4, lifeMax: 0.7 });
+
+      const push = (e, force) => {
+        if (!force) return;
+        const d = VB.dist(x, y, e.x, e.y) || 1;
+        const ux = (e.x - x) / d;
+        const uy = (e.y - y) / d;
+        for (let i = 0; i < 4; i++) this.world.moveCircle(e, ux * force * 0.25, uy * force * 0.25);
+      };
+
+      for (const e of this.enemies) {
+        if (e.dead) continue;
+        const d = VB.dist(x, y, e.x, e.y);
+        if (d > r + e.r) continue;
+        const falloff = 1 - d / (r + e.r);
+        e.active = true;
+        if (spec.slow) e.applySlow(spec.slow, spec.slowTime || 1.5);
+        if (spec.mark) e.markT = Math.max(e.markT, spec.mark);
+        e.takeDamage(dmg * (0.55 + 0.45 * falloff), this);
+        push(e, knock * falloff);
+      }
+      const b = this.boss;
+      if (b && b.active && !b.dead && VB.dist(x, y, b.x, b.y) < r + b.r) {
+        if (spec.slow) b.applySlow(spec.slow, spec.slowTime || 1.5);
+        if (spec.mark) b.markT = Math.max(b.markT, spec.mark);
+        b.takeDamage(dmg * 0.8, this);
+      }
+    }
+
+    /* Chain the crew. Skill and ult aimed at the same target read as one
+       combo instead of two button presses, and longer chains escalate. */
+    linkAbilities(which, def, p) {
+      if (this.linkTimer <= 0) {
+        this.linkN = 1;
+        this.linkKinds = [which];
+        this.linkFused = false;
+        this.linkStruck = false;
+        this.linkOverload = false;
+      } else {
+        this.linkN += 1;
+        if (!this.linkKinds.includes(which)) this.linkKinds.push(which);
+      }
+      this.linkTimer = 7;
+      this.audio.linkUp(this.linkN);
+
+      if (this.linkN >= 2 && this.linkKinds.length === 2 && !this.linkFused) {
+        this.linkFused = true;
+        this.fusionFinisher(p);
+      }
+      if (this.linkN >= 3 && !this.linkStruck) {
+        this.linkStruck = true;
+        this.squadStrike();
+      }
+      if (this.linkN >= 4 && !this.linkOverload) {
+        this.linkOverload = true;
+        this.stationOverload(p);
+      }
+    }
+
+    fusionFinisher(p) {
+      p.skillCd = 0;
+      p.ultCharge = Math.min(p.ultMax, p.ultCharge + 34);
+      this.killBanner(p.fusion, p.accent, 0, true);
+      this.audio.linkUp(3);
+      this.shake(14);
+      this.flash = Math.min(1, this.flash + 0.3);
+      this.novaBlast({ r: 224, dmg: 34, knock: 210, flash: 0.2 }, p.x, p.y, p.accent);
+      this.particles.ring(p.x, p.y, "#ffffff", 300, 0.7);
+    }
+
+    /* Two crewmates drop their signature on your marker — the multi-character
+       combo the solo run can never do on its own. */
+    squadStrike() {
+      const p = this.player;
+      const others = VB.CHAR_ORDER.filter((id) => id !== p.charId);
+      const first = VB.CHARACTERS[others[Math.floor(Math.random() * others.length)]];
+      let second = others[Math.floor(Math.random() * others.length)];
+      while (second === first.id) second = others[Math.floor(Math.random() * others.length)];
+      const ally = VB.CHARACTERS[second];
+      const aim = this.mouseWorld();
+      const spot = this.freeSpot(aim, p, 560);
+
+      this.killBanner(`SQUAD LINK // ${first.name} + ${ally.name}`, "#4ef4ff", 0, true);
+      this.toast(`${ally.role} INBOUND`, "cyan", 2.4);
+      this.spawnField({
+        x: spot.x,
+        y: spot.y,
+        r: 156,
+        dur: 2.6,
+        tick: 0.34,
+        dmg: 21,
+        slow: 0.5,
+        slowTime: 1.2,
+        color: first.accent,
+      });
+      this.schedule(0.4, () => {
+        if (this.state !== "playing") return;
+        const ang = Math.atan2(aim.y - p.y, aim.x - p.x);
+        this.fireBeam(
+          { len: 940, dmg: 42, width: 18, mark: 3.5 },
+          p.x + Math.cos(ang + 1.4) * 240,
+          p.y + Math.sin(ang + 1.4) * 240,
+          ang,
+          ally.accent
+        );
+      });
+    }
+
+    stationOverload(p) {
+      this.audio.overload();
+      this.shake(32);
+      this.flash = 1;
+      let touched = 0;
+      for (const e of this.enemies) {
+        if (e.dead) continue;
+        e.active = true;
+        e.applySlow(0.6, 2.4);
+        e.takeDamage(74, this);
+        this.particles.ring(e.x, e.y, "#ff4d63", 90, 0.45);
+        touched += 1;
+      }
+      if (this.boss && this.boss.active && !this.boss.dead) {
+        this.boss.takeDamage(120, this);
+      }
+      p.heal(26, this);
+      p.shield = Math.min(p.maxShield, p.shield + 40);
+      // Last, so a streak banner from the sweep cannot eat the combo name.
+      this.killBanner("STATION OVERLOAD", "#ff4d63", 0, true);
+      this.say("Every relay on Nova-9 just lit for you. Do not get comfortable.", 4, "AURORA");
+      this.toast(`OVERLOAD // ${touched} SIGNATURES HIT`, "red", 2.6);
+    }
+
+    updateLinks(dt) {
+      if (this.linkTimer > 0) {
+        this.linkTimer -= dt;
+        if (this.linkTimer <= 0) {
+          this.linkTimer = 0;
+          this.linkN = 0;
+        }
+      }
+    }
+
+    updateAbilities(dt) {
+      this.updateTimers(dt);
+      this.updateLinks(dt);
+      for (const f of this.fields) f.update(dt, this);
+      this.fields = this.fields.filter((f) => f.life > 0);
+      for (const b of this.beams) b.life -= dt;
+      this.beams = this.beams.filter((b) => b.life > 0);
+    }
+
+    updateStreak(dt) {
+      if (this.banner) {
+        this.banner.time -= dt;
+        if (this.banner.time <= 0) this.banner = null;
+      }
+      if (this.streakTimer > 0) {
+        this.streakTimer -= dt;
+        if (this.streakTimer <= 0) this.streak = 0;
+      }
+    }
+
+    explosion(x, y, radius, damage, color, harmPlayer = true) {
       this.audio.explode(true);
       this.shake(16);
       this.flash = Math.min(1, this.flash + 0.4);
@@ -736,7 +1366,7 @@
       }
 
       const pl = this.player;
-      if (pl && !pl.dead) {
+      if (pl && !pl.dead && harmPlayer) {
         const d = VB.dist(x, y, pl.x, pl.y);
         if (d < radius + pl.r) {
           const falloff = 1 - d / (radius + pl.r);
@@ -794,8 +1424,20 @@
       if (!p || p.dead) return;
 
       this.touch.update(dt);
+      const input = this.input;
+      if (input.hit("KeyQ")) this.castAbility("skill");
+      if (input.hit("KeyR")) this.castAbility("ult");
+      if (this.touch.skillPress) {
+        this.touch.skillPress = false;
+        this.castAbility("skill");
+      }
+      if (this.touch.ultPress) {
+        this.touch.ultPress = false;
+        this.castAbility("ult");
+      }
       p.update(dt, this);
       this.updateDoors(dt);
+      this.updateAbilities(dt);
 
       for (const e of this.enemies) e.update(dt, this);
       if (this.boss) this.boss.update(dt, this);
@@ -822,6 +1464,7 @@
       this.particles.update(dt);
       this.updateTexts(dt);
       this.updateToasts(dt);
+      this.updateStreak(dt);
       this.updateDialog(dt);
       this.updateCamera(dt);
       this.updateDiscovery(dt);
@@ -1075,7 +1718,12 @@
       g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
       g.clearRect(0, 0, W, H);
 
-      if (this.state === "title" || !this.world || !this.player) {
+      if (
+        this.state === "title" ||
+        this.state === "select" ||
+        !this.world ||
+        !this.player
+      ) {
         this.renderTitleBg(g);
         return;
       }
@@ -1096,6 +1744,7 @@
       this.world.drawTerminals(g, this.time, this.player);
       this.world.drawAirlock(g, this.time, this.bossDefeated);
 
+      for (const f of this.fields) f.draw(g);
       for (const b of this.barrels) b.draw(g, this);
       for (const pk of this.pickups) pk.draw(g, this);
       for (const e of this.enemies) e.draw(g, this);
@@ -1103,6 +1752,7 @@
       if (!this.player.dead) this.player.draw(g, this);
       for (const b of this.playerBullets) b.draw(g);
       for (const b of this.enemyBullets) b.draw(g);
+      this.drawBeams(g);
       this.particles.draw(g);
       this.drawTexts(g);
 
@@ -1117,6 +1767,39 @@
         VB.drawHUD(g, this);
         VB.drawCrosshair(g, this);
         if (this.touchMode) this.touch.draw(g);
+      }
+    }
+
+    /* Railgun slits and squad strikes: a hard core that bleeds into a wide,
+       fast-fading halo. */
+    drawBeams(g) {
+      for (const b of this.beams) {
+        const k = VB.clamp(b.life / b.max, 0, 1);
+        g.save();
+        g.globalCompositeOperation = "lighter";
+        g.lineCap = "round";
+        g.strokeStyle = b.color;
+        g.globalAlpha = 0.28 * k;
+        g.lineWidth = b.w * 2.6 * k;
+        g.beginPath();
+        g.moveTo(b.x1, b.y1);
+        g.lineTo(b.x2, b.y2);
+        g.stroke();
+
+        g.globalAlpha = 0.85 * k;
+        g.lineWidth = Math.max(1.2, b.w * 0.5 * k);
+        g.strokeStyle = "#f4feff";
+        g.beginPath();
+        g.moveTo(b.x1, b.y1);
+        g.lineTo(b.x2, b.y2);
+        g.stroke();
+
+        g.globalAlpha = 0.7 * k;
+        g.fillStyle = b.color;
+        g.beginPath();
+        g.arc(b.x1, b.y1, b.w * 0.9 * k, 0, TAU);
+        g.fill();
+        g.restore();
       }
     }
 
@@ -1564,11 +2247,13 @@
     }
   }
 
-  window.addEventListener("DOMContentLoaded", () => {
-    if (!window.__VOIDBREAK__) new Game();
-  });
-
-  if (document.readyState !== "loading" && !window.__VOIDBREAK__) {
+  function launch() {
+    if (window.__VOIDBREAK__) return;
     new Game();
+    VB.boot && VB.boot.finish();
   }
+
+  window.addEventListener("DOMContentLoaded", launch);
+
+  if (document.readyState !== "loading") launch();
 })();

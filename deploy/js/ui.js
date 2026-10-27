@@ -94,7 +94,7 @@
 
     panel(g, x, y, w, h);
 
-    text(g, "ROOK // SALVAGE UNIT", x + 16, y + 20, 9.5, "#83aec2", "left", 2.2);
+    text(g, `${p.name} // ${p.role}`, x + 16, y + 20, 9.5, p.accent, "left", 2.2);
     text(
       g,
       `HULL ${Math.ceil(p.hp)}`,
@@ -135,7 +135,7 @@
     bar(g, x + 16, y + 72, w - 32, 6, p.shield / p.maxShield, "#1d8aa3", "#5ef6ff");
 
     const dashReady = p.dashCooldown <= 0;
-    const dashFrac = 1 - Math.min(1, p.dashCooldown / 1.05);
+    const dashFrac = 1 - Math.min(1, p.dashCooldown / p.dashCdMax);
     text(
       g,
       dashReady ? "DASH READY" : "DASH CHARGING",
@@ -167,11 +167,11 @@
 
       text(
         g,
-        lvl ? "ION LANCE MK II" : "PLASMA MK I",
+        lvl ? p.gun.mk2 : p.gun.name,
         x + 16,
         y + 120,
         7.5,
-        lvl ? "#ffd166" : "#8fd7e6",
+        lvl ? "#ffd166" : p.accent,
         "left",
         1.2
       );
@@ -219,19 +219,24 @@
 
     panel(g, x, y, w, h);
 
+    const mk2 = p.weaponLevel > 1;
+    const dmg = Math.round(p.gun.dmg * (mk2 ? 1.45 : 1));
+    const pellets = p.gun.pellets + (mk2 && p.gun.pellets > 1 ? 2 : 0);
+    const rate = (1 / (p.gun.rate * (mk2 ? 0.78 : 1))).toFixed(1);
+
     text(
       g,
-      p.weaponLevel > 1 ? "ION LANCE // MK II" : "PLASMA DRIVER // MK I",
+      `${mk2 ? p.gun.mk2 : p.gun.name} // ${mk2 ? "MK II" : "MK I"}`,
       x + 16,
       y + 21,
       10,
-      p.weaponLevel > 1 ? "#ffd166" : "#8fd7e6",
+      mk2 ? "#ffd166" : p.accent,
       "left",
       2
     );
     text(
       g,
-      p.weaponLevel > 1 ? "DMG 17   •   RATE 9.5/s" : "DMG 12   •   RATE 6.6/s",
+      `DMG ${dmg}${pellets > 1 ? "×" + pellets : ""}   •   RATE ${rate}/s`,
       x + 16,
       y + 37,
       8,
@@ -658,10 +663,76 @@
     }
   }
 
+  function drawKillBanner(g, game) {
+    const b = game.banner;
+    if (!b) return;
+    const W = game.width;
+    const H = game.height;
+    const y = VB.clamp(H * 0.3, 132, Math.max(132, H - 280));
+    const settle = Math.max(0, 1 - (1 - b.time / b.max) * 5.5);
+    const pop = 1 + 0.28 * settle * settle;
+    const alpha =
+      Math.min(1, (1 - b.time / b.max) * 12 + 0.2) * Math.min(1, b.time * 2.6);
+
+    const size = VB.clamp(Math.min(W * 0.062, 30), 15, 30);
+    g.save();
+    g.globalAlpha = Math.max(0, alpha);
+    g.translate(W / 2, y - settle * 6);
+    g.scale(pop, pop);
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+
+    setLS(g, 3.5);
+    g.font = `900 ${size}px "Consolas","Courier New",monospace`;
+    const tw = g.measureText(b.text).width;
+    setLS(g, 0);
+    const pw = Math.min(W - 20, tw + 84);
+    const ph = size + 20;
+
+    g.beginPath();
+    g.moveTo(-pw / 2 + 15, -ph / 2);
+    g.lineTo(pw / 2, -ph / 2);
+    g.lineTo(pw / 2 - 15, ph / 2);
+    g.lineTo(-pw / 2, ph / 2);
+    g.closePath();
+    g.fillStyle = "rgba(2,7,13,0.74)";
+    g.fill();
+    g.strokeStyle = b.color;
+    g.lineWidth = 1.4;
+    g.globalAlpha = Math.max(0, alpha * 0.7);
+    g.stroke();
+    g.globalAlpha = Math.max(0, alpha);
+
+    g.fillStyle = b.color;
+    g.fillRect(-pw / 2 + 4, -ph / 2 + 3, 3, ph - 6);
+    g.fillRect(pw / 2 - 7, -ph / 2 + 3, 3, ph - 6);
+
+    g.lineWidth = 3.5;
+    g.strokeStyle = "rgba(1,5,10,0.9)";
+    g.strokeText(b.text, 0, 1);
+    setLS(g, 3.5);
+    g.shadowColor = b.color;
+    g.shadowBlur = 14;
+    g.fillStyle = b.color;
+    g.fillText(b.text, 0, 1);
+    g.shadowBlur = 0;
+    g.globalAlpha = Math.max(0, alpha * 0.5);
+    g.fillStyle = "#f4feff";
+    g.fillText(b.text, 0, 0);
+    g.globalAlpha = Math.max(0, alpha * 0.8);
+    if (b.tier) {
+      text(g, "STREAK x" + Math.max(1, b.tier), 0, ph / 2 + 12, 8.5, b.color, "center", 2.4);
+    }
+    g.restore();
+  }
+
   function speakerColor(speaker) {
     if (speaker === "AURORA") return "#ff66dc";
-    if (speaker === "ROOK") return "#5ef6ff";
     if (speaker === "KESTREL") return "#ffd166";
+    const chars = VB.CHARACTERS;
+    for (const id in chars) {
+      if (chars[id].name === speaker) return chars[id].accent;
+    }
     return "#9fc4d8";
   }
 
@@ -922,11 +993,173 @@
     g.restore();
   }
 
+  /* Ability chips: a ring that fills as a cooldown recharges or an ultimate
+     charges, with the archetype glyph inside so a new kit reads instantly. */
+  function abilityGlyph(g, cx, cy, type, color, alpha) {
+    g.save();
+    g.globalAlpha = alpha;
+    g.strokeStyle = color;
+    g.lineWidth = 1.3;
+    g.beginPath();
+    if (type === "nova") {
+      g.arc(cx, cy, 4.2, 0, VB.TAU);
+      for (let i = 0; i < 4; i++) {
+        const a = (i * VB.TAU) / 4 + Math.PI / 4;
+        g.moveTo(cx + Math.cos(a) * 5.4, cy + Math.sin(a) * 5.4);
+        g.lineTo(cx + Math.cos(a) * 7, cy + Math.sin(a) * 7);
+      }
+    } else if (type === "surge") {
+      g.moveTo(cx - 4, cy - 5);
+      g.lineTo(cx + 1.5, cy);
+      g.lineTo(cx - 4, cy + 5);
+      g.moveTo(cx + 1.5, cy - 5);
+      g.lineTo(cx + 6.5, cy);
+      g.lineTo(cx + 1.5, cy + 5);
+    } else if (type === "bulwark") {
+      g.moveTo(cx, cy - 6);
+      g.lineTo(cx + 5, cy - 3);
+      g.lineTo(cx + 5, cy + 2);
+      g.lineTo(cx, cy + 6.5);
+      g.lineTo(cx - 5, cy + 2);
+      g.lineTo(cx - 5, cy - 3);
+      g.closePath();
+    } else if (type === "phase") {
+      g.moveTo(cx - 6, cy + 4);
+      g.lineTo(cx + 4, cy - 4);
+      g.lineTo(cx + 6.5, cy - 6.5);
+      g.moveTo(cx + 1, cy - 6.5);
+      g.lineTo(cx + 6.5, cy - 6.5);
+      g.lineTo(cx + 6.5, cy - 1);
+    } else if (type === "beam") {
+      g.moveTo(cx - 7, cy + 5);
+      g.lineTo(cx + 7, cy - 5);
+      g.moveTo(cx - 7, cy + 1.5);
+      g.lineTo(cx + 7, cy - 1.5);
+    } else {
+      g.arc(cx, cy, 6.2, 0, VB.TAU);
+      g.moveTo(cx + 3.2, cy);
+      g.arc(cx, cy, 3.2, 0, VB.TAU);
+    }
+    g.stroke();
+    g.restore();
+  }
+
+  function abilityChip(g, x, y, size, frac, def, label, color, pulse) {
+    const ready = frac >= 1;
+    g.save();
+    g.fillStyle = "rgba(3,10,18,0.82)";
+    VB.roundRect(g, x, y, size, size, 5);
+    g.fill();
+    g.strokeStyle = ready ? color : "rgba(120,160,180,0.3)";
+    g.lineWidth = ready ? 1.5 : 1;
+    if (ready) {
+      g.shadowColor = color;
+      g.shadowBlur = 8 + pulse * 7;
+    }
+    VB.roundRect(g, x, y, size, size, 5);
+    g.stroke();
+    g.shadowBlur = 0;
+
+    // recharge sweep
+    const cx = x + size / 2;
+    const cy = y + size / 2;
+    const rad = size / 2 + 4.5;
+    g.lineWidth = 2.4;
+    g.strokeStyle = "rgba(80,120,140,0.22)";
+    g.beginPath();
+    g.arc(cx, cy, rad, 0, VB.TAU);
+    g.stroke();
+    g.strokeStyle = ready ? color : "rgba(120,180,200,0.55)";
+    g.beginPath();
+    g.arc(cx, cy, rad, -Math.PI / 2, -Math.PI / 2 + VB.TAU * VB.clamp(frac, 0, 1));
+    g.stroke();
+
+    // cooldown shade over the glyph
+    if (!ready) {
+      g.globalAlpha = 0.5;
+      g.fillStyle = "rgba(2,6,12,0.72)";
+      VB.roundRect(g, x, y + size * (1 - frac), size, size * frac, 5);
+      g.fill();
+      g.globalAlpha = 1;
+    }
+
+    abilityGlyph(g, cx, cy, def.type, ready ? color : "#6f8b9c", ready ? 1 : 0.72);
+
+    text(g, label, x + size / 2, y - 6, 8, ready ? color : "#5f7b8c", "center", 1.4);
+    text(g, def.name, cx, y + size + 12, 7, ready ? "#cfeaf6" : "#5f7b8c", "center", 1);
+    g.restore();
+  }
+
+  function drawAbilityMeters(g, game) {
+    const p = game.player;
+    if (!p.skill || !p.skill.name) return;
+    const touch = !!game.touchMode;
+    const W = game.width;
+    const H = game.height;
+    const size = touch ? 34 : 40;
+    const x = 22;
+    /* On a narrow desktop window the directive plate already owns the strip
+       under the player panel, so the chips drop below it instead. */
+    const y = touch ? 162 : W >= 1100 ? 146 : 212;
+    const pulse = 0.5 + 0.5 * Math.sin(game.time * 7);
+
+    if (!touch) {
+      abilityChip(
+        g,
+        x,
+        y,
+        size,
+        1 - Math.min(1, p.skillCd / Math.max(0.001, p.skillCdMax)),
+        p.skill,
+        "Q",
+        p.accent,
+        pulse
+      );
+      abilityChip(
+        g,
+        x + size + 30,
+        y,
+        size,
+        p.ultCharge / p.ultMax,
+        p.ultDef,
+        "R",
+        p.ultCharge >= p.ultMax ? "#ffd166" : p.accent,
+        pulse
+      );
+    }
+
+    if (game.linkN >= 2) {
+      const lw = touch ? 152 : 208;
+      /* On a phone the whole upper band is already spoken for, so the chain
+         readout lives in the gap between the two thumb sticks. */
+      const lx = touch ? VB.clamp(W / 2 - lw / 2, 8, W - lw - 8) : W >= 1100 ? x : x + 2 * (size + 30) + 6;
+      const ly = touch ? H - 50 : W >= 1100 ? y + size + 26 : y + 5;
+      g.save();
+      g.globalAlpha = 0.94;
+      g.fillStyle = "rgba(2,7,13,0.78)";
+      VB.roundRect(g, lx, ly, lw, 30, 4);
+      g.fill();
+      g.strokeStyle = "#4ef4ff";
+      g.lineWidth = 1.2;
+      VB.roundRect(g, lx, ly, lw, 30, 4);
+      g.stroke();
+      text(g, `SQUAD LINK x${game.linkN}`, lx + 10, ly + 13, 9, "#4ef4ff", "left", 2);
+      text(g, p.fusion, lx + 10, ly + 25, 7, "#9fc4d8", "left", 1);
+      const frac = Math.max(0, game.linkTimer / 7);
+      g.fillStyle = "rgba(78,244,255,0.18)";
+      g.fillRect(lx + lw - 62, ly + 9, 52, 4);
+      g.fillStyle = "#4ef4ff";
+      g.fillRect(lx + lw - 62, ly + 9, 52 * frac, 4);
+      g.restore();
+    }
+  }
+
   function drawHUD(g, game) {
     if (!game.player) return;
     drawPlayerPanel(g, game);
     drawWeaponPanel(g, game);
     drawMinimap(g, game);
+    drawAbilityMeters(g, game);
 
     if (game.escapeActive) drawEscapeBanner(g, game);
     else if (game.width >= 1100 || !game.boss || !game.boss.active || game.boss.dead) {
@@ -934,6 +1167,7 @@
     }
 
     drawToasts(g, game);
+    drawKillBanner(g, game);
     drawBossBar(g, game);
     if (!game.touchMode) drawPrompt(g, game);
     drawDialog(g, game);
@@ -949,6 +1183,8 @@
   }
 
   VB.drawHUD = drawHUD;
+  VB.abilityGlyph = abilityGlyph;
   VB.drawCrosshair = drawCrosshair;
   VB.drawWaypoint = drawWaypoint;
+  VB.stage && VB.stage("hud");
 })();

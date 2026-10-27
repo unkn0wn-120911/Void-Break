@@ -35,6 +35,8 @@
       this.geo = null;
       this.insets = { left: 0, right: 0, top: 0, bottom: 0 };
       this.dead = 10;
+      this.skillPress = false;
+      this.ultPress = false;
       this.forced = /[?&]touch=1/.test(location.search);
       this.bind();
     }
@@ -122,6 +124,8 @@
         aimHome: { x: aimX, y: aimY },
         dash: { x: side, y: aimY + r * 0.34 },
         act: { x: side, y: aimY - r * 0.9 },
+        skill: { x: W - s.right - m - br - (br + 10) * 2, y: aimY - r * 2.3 },
+        ult: { x: W - s.right - m - br, y: aimY - r * 2.3 },
         pause: { x: W - s.right - 26, y: s.top + 26 },
       };
     }
@@ -158,6 +162,16 @@
         g.input.pressed.add("ShiftLeft");
         return;
       }
+      if (this.inCircle(x, y, geo.ult, 8)) {
+        this.pointers.set(e.pointerId, { role: "ui" });
+        this.ultPress = true;
+        return;
+      }
+      if (this.inCircle(x, y, geo.skill, 8)) {
+        this.pointers.set(e.pointerId, { role: "ui" });
+        this.skillPress = true;
+        return;
+      }
       if (g.prompt && this.inCircle(x, y, geo.act, 6)) {
         this.pointers.set(e.pointerId, { role: "ui" });
         g.input.pressed.add("KeyE");
@@ -166,14 +180,25 @@
 
       if (x < g.width * 0.5) {
         if (this.move) return;
-        this.move = { ox: x, oy: y, x, y };
+        const o = this.stickOrigin(geo.moveHome, x, y, geo.r);
+        this.move = { ox: o.ox, oy: o.oy, x, y, fixed: o.fixed };
         this.pointers.set(e.pointerId, { role: "move" });
       } else {
         if (this.aim) return;
-        this.aim = { ox: x, oy: y, x, y };
+        const o = this.stickOrigin(geo.aimHome, x, y, geo.r);
+        this.aim = { ox: o.ox, oy: o.oy, x, y, fixed: o.fixed };
         this.pointers.set(e.pointerId, { role: "aim" });
         g.input.touch.fire = true;
       }
+    }
+
+    /* A press on or near the printed ring locks the stick to it so the knob
+       can sweep the full circle; a press elsewhere drops a floating stick. */
+    stickOrigin(home, x, y, r) {
+      if (Math.hypot(x - home.x, y - home.y) <= r * 1.85) {
+        return { ox: home.x, oy: home.y, fixed: true };
+      }
+      return { ox: x, oy: y, fixed: false };
     }
 
     onMove(e) {
@@ -266,9 +291,29 @@
         this.aim,
         geo.r,
         this.aim ? "#ff9d3c" : "#ff45d8",
-        "AIM / FIRE"
+        "AIM / FIRE",
+        true
       );
       this.drawButton(ctx, geo.dash, "DASH", game.player && game.player.dashCooldown > 0, "#9dfaff");
+      const p = game.player;
+      if (p && p.skill) {
+        this.drawAbility(
+          ctx,
+          geo.skill,
+          p.skill,
+          "Q",
+          1 - Math.min(1, p.skillCd / Math.max(0.001, p.skillCdMax)),
+          p.accent
+        );
+        this.drawAbility(
+          ctx,
+          geo.ult,
+          p.ultDef,
+          "R",
+          p.ultCharge / p.ultMax,
+          p.ultCharge >= p.ultMax ? "#ffd166" : p.accent
+        );
+      }
       if (game.prompt) {
         this.drawButton(
           ctx,
@@ -282,7 +327,7 @@
       ctx.restore();
     }
 
-    drawStick(ctx, home, stick, r, color, label) {
+    drawStick(ctx, home, stick, r, color, label, showDeg) {
       const ox = stick ? stick.ox : home.x;
       const oy = stick ? stick.oy : home.y;
       const live = !!stick;
@@ -301,18 +346,48 @@
       ctx.arc(ox, oy, r, 0, TAU);
       ctx.fill();
 
+      this.drawDial(ctx, ox, oy, r, color, live);
+
       if (live) {
-        ctx.globalAlpha = 1;
-        ctx.strokeStyle = "rgba(2,8,14,0.9)";
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(ox, oy, r * 0.44, 0, TAU);
-        ctx.fill();
+        const vx = stick.x - ox;
+        const vy = stick.y - oy;
+        const len = Math.hypot(vx, vy);
+        const ang = Math.atan2(vy, vx);
+        const clamp = len > r ? r / len : 1;
+        const kx = ox + vx * clamp;
+        const ky = oy + vy * clamp;
+
         ctx.globalAlpha = 0.5;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(ox, oy);
-        ctx.lineTo(stick.x, stick.y);
+        ctx.lineTo(kx, ky);
         ctx.stroke();
+
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = color;
+        ctx.strokeStyle = "rgba(2,8,14,0.9)";
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.arc(kx, ky, r * 0.36, 0, TAU);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.globalAlpha = 0.35;
+        ctx.beginPath();
+        ctx.arc(ox, oy, r * 0.14, 0, TAU);
+        ctx.fill();
+
+        if (len > this.dead) this.drawHeading(ctx, ox, oy, r, ang, color);
+        if (showDeg) {
+          const deg = Math.round(((ang * 180) / Math.PI + 360) % 360);
+          ctx.globalAlpha = 0.95;
+          ctx.font = '700 9px "Consolas",monospace';
+          ctx.textAlign = "center";
+          ctx.fillStyle = color;
+          ctx.fillText(deg + "\u00b0", ox, oy + r + 15);
+        }
       }
 
       if (!live) {
@@ -322,6 +397,49 @@
         ctx.fillStyle = color;
         ctx.fillText(label, home.x, home.y + r + 14);
       }
+      ctx.restore();
+    }
+
+    /* Compass ring: 24 tick marks so the stick reads as a full circle. */
+    drawDial(ctx, ox, oy, r, color, live) {
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      for (let a = 0; a < 360; a += 15) {
+        const cardinal = a % 90 === 0;
+        ctx.globalAlpha = (cardinal ? 0.5 : 0.2) * (live ? 1 : 0.8);
+        const rad = (a * Math.PI) / 180;
+        const inner = r - (cardinal ? 9 : 5);
+        ctx.beginPath();
+        ctx.moveTo(ox + Math.cos(rad) * inner, oy + Math.sin(rad) * inner);
+        ctx.lineTo(ox + Math.cos(rad) * (r - 1.5), oy + Math.sin(rad) * (r - 1.5));
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    /* Needle plus trailing sweep at the live bearing. */
+    drawHeading(ctx, ox, oy, r, ang, color) {
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.8;
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      ctx.arc(ox, oy, r - 4, ang - 0.55, ang);
+      ctx.stroke();
+
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = color;
+      const px = ox + Math.cos(ang) * (r - 1);
+      const py = oy + Math.sin(ang) * (r - 1);
+      ctx.translate(px, py);
+      ctx.rotate(ang);
+      ctx.beginPath();
+      ctx.moveTo(7, 0);
+      ctx.lineTo(-3, 4.6);
+      ctx.lineTo(-3, -4.6);
+      ctx.closePath();
+      ctx.fill();
       ctx.restore();
     }
 
@@ -346,6 +464,53 @@
       ctx.restore();
     }
 
+    /* Ability buttons carry their own state: the ring fills as a cooldown
+       recharges or an ultimate charges, so no separate meter is needed. */
+    drawAbility(ctx, c, def, key, frac, color) {
+      const r = this.geo.br;
+      const ready = frac >= 1;
+      ctx.save();
+      ctx.globalAlpha = ready ? 0.96 : 0.7;
+      ctx.fillStyle = "rgba(3,12,20,0.74)";
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, TAU);
+      ctx.fill();
+
+      ctx.lineWidth = 2.4;
+      ctx.strokeStyle = "rgba(80,120,140,0.3)";
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, TAU);
+      ctx.stroke();
+
+      ctx.strokeStyle = ready ? color : "rgba(150,200,220,0.7)";
+      if (ready) {
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 12;
+      }
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, -Math.PI / 2, -Math.PI / 2 + TAU * VB.clamp(frac, 0, 1));
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      const tone = ready ? color : "#7695a6";
+      if (VB.abilityGlyph) {
+        VB.abilityGlyph(ctx, c.x, c.y, def.type, tone, 1);
+      } else {
+        ctx.fillStyle = tone;
+        ctx.font = '700 11px "Consolas",monospace';
+        ctx.textAlign = "center";
+        ctx.fillText(key, c.x, c.y + 4);
+      }
+
+      ctx.fillStyle = ready ? tone : "#7695a6";
+      ctx.font = '700 8px "Consolas",monospace';
+      ctx.textAlign = "center";
+      ctx.fillText(key, c.x - r + 5, c.y - r + 5);
+      ctx.font = '700 7px "Consolas",monospace';
+      ctx.fillText(def.name, c.x, c.y + r + 10);
+      ctx.restore();
+    }
+
     drawPause(ctx, c) {
       const r = 17;
       ctx.save();
@@ -367,4 +532,5 @@
   }
 
   VB.TouchControls = TouchControls;
+  VB.stage && VB.stage("link");
 })();

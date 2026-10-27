@@ -4,7 +4,7 @@
 
   VB.TAU = Math.PI * 2;
   VB.TILE = 48;
-  VB.VERSION = "1.1.0";
+  VB.VERSION = "1.3.0";
 
   VB.clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
   VB.lerp = (a, b, t) => a + (b - a) * t;

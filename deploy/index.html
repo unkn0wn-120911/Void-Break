@@ -21,6 +21,28 @@
     <div id="fx-vignette"></div>
 
     <div id="overlay">
+      <!-- BOOT -->
+      <section id="screen-boot" class="screen active">
+        <div class="boot-wrap">
+          <div class="eyebrow"><span class="dot"></span> DEEP SALVAGE DIVISION // HANDSHAKE</div>
+          <h1 class="boot-title">VOID<span>IS LOADING</span></h1>
+          <div class="boot-bar"><i id="boot-fill"></i></div>
+          <div class="boot-readout">
+            <span id="boot-pct">00%</span>
+            <span id="boot-stage">MOUNTING VOID CORE</span>
+          </div>
+          <div id="boot-log" class="boot-log"></div>
+          <div class="tagline">TAP OR PRESS ANY KEY TO SKIP</div>
+        </div>
+      </section>
+      <script>
+        // Loading plate must never outlive the bundle that clears it.
+        setTimeout(function () {
+          var plate = document.getElementById("screen-boot");
+          if (plate) plate.classList.remove("active");
+        }, 7000);
+      </script>
+
       <!-- TITLE -->
       <section id="screen-title" class="screen active">
         <div class="title-wrap">
@@ -32,7 +54,7 @@
             Ninety seconds between you and a dying star.
           </p>
           <div class="title-actions">
-            <button id="btn-start" class="btn primary">INITIATE DROP <span class="key">↵</span></button>
+            <button id="btn-start" class="btn primary">SELECT OPERATOR <span class="key">↵</span></button>
           </div>
           <div id="update-chip" class="update-chip" hidden>
             <span class="dot"></span> NEW BUILD DEPLOYED — RELOAD TO PATCH
@@ -54,6 +76,8 @@
             <div class="control"><span class="keys"><kbd>MOUSE</kbd></span> AIM</div>
             <div class="control"><span class="keys"><kbd>LMB</kbd></span> FIRE</div>
             <div class="control"><span class="keys"><kbd>SHIFT</kbd></span> DASH</div>
+            <div class="control"><span class="keys"><kbd>Q</kbd></span> SKILL</div>
+            <div class="control"><span class="keys"><kbd>R</kbd></span> ULTIMATE</div>
             <div class="control"><span class="keys"><kbd>E</kbd></span> INTERACT</div>
             <div class="control"><span class="keys"><kbd>ESC</kbd></span> PAUSE</div>
           </div>
@@ -61,6 +85,8 @@
             <div class="control"><span class="keys"><kbd>LEFT</kbd></span> MOVE</div>
             <div class="control"><span class="keys"><kbd>RIGHT</kbd></span> AIM + FIRE</div>
             <div class="control"><span class="keys"><kbd>DASH</kbd></span> DASH</div>
+            <div class="control"><span class="keys"><kbd>Q</kbd></span> SKILL</div>
+            <div class="control"><span class="keys"><kbd>R</kbd></span> ULTIMATE</div>
             <div class="control"><span class="keys"><kbd>USE</kbd></span> INTERACT</div>
             <div class="control"><span class="keys"><kbd>||</kbd></span> PAUSE</div>
             <div class="control"><span class="keys"><kbd>ROTATE</kbd></span> LANDSCAPE</div>
@@ -75,15 +101,34 @@
         </div>
       </section>
 
+      <!-- CHARACTER SELECT -->
+      <section id="screen-select" class="screen">
+        <div class="select-wrap">
+          <div class="eyebrow"><span class="dot"></span> DROPSHIP MANIFEST // OPERATOR SELECT</div>
+          <h2 class="select-title">CHOOSE YOUR <span>OPERATOR</span></h2>
+          <div id="char-grid" class="char-grid"></div>
+          <div class="select-detail">
+            <div id="char-stats" class="char-stats"></div>
+            <p id="char-blurb" class="char-blurb"></p>
+            <div id="char-kit" class="char-kit"></div>
+          </div>
+          <div class="select-actions">
+            <button id="btn-select-go" class="btn primary">DEPLOY <span class="key">↵</span></button>
+            <button id="btn-select-back" class="btn ghost">BACK</button>
+            <span class="select-hint">ARROWS / TAP TO SWITCH</span>
+          </div>
+        </div>
+      </section>
+
       <!-- PAUSE -->
-      <section id="screen-pause" class="screen">
-        <div class="modal">
+      <section id="screen-pause" class="screen">        <div class="modal">
           <div class="modal-eyebrow">SYSTEM HALT</div>
           <h2>PAUSED</h2>
           <div class="modal-actions">
             <button id="btn-resume" class="btn primary">RESUME</button>
             <button id="btn-pause-restart" class="btn">RESTART RUN</button>
             <button id="btn-pause-mute" class="btn">AUDIO: ON</button>
+            <button id="btn-pause-voice" class="btn">ANNOUNCER: ON</button>
             <button id="btn-pause-quit" class="btn ghost">ABANDON RUN</button>
           </div>
           <p class="hint">Press ESC to resume</p>
@@ -147,6 +192,7 @@
   </div>
 
   <script src="js/utils.js"></script>
+  <script src="js/boot.js"></script>
   <script src="js/input.js"></script>
   <script src="js/audio.js"></script>
   <script src="js/world.js"></script>
