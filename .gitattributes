@@ -1,0 +1,16 @@
+# The shell scripts only run with LF endings, and the web assets are served
+# byte-for-byte, so keep every text file on LF regardless of local core.autocrlf.
+* text=auto
+*.sh text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.java text eol=lf
+*.xml text eol=lf
+*.md text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+*.apk binary
+*.idsig binary
+*.png binary

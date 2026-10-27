@@ -1,0 +1,12 @@
+# Rebuilt by build-apk.sh — android/build also holds the local signing keystore,
+# which should never leave this machine.
+android/build/
+android/assets/
+
+# apksigner writes this sidecar next to each signed APK.
+*.apk.idsig
+
+# OS clutter.
+Thumbs.db
+desktop.ini
+.DS_Store
